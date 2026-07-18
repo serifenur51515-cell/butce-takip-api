@@ -1,4 +1,6 @@
-const express = require('express');
+import express from 'express';
+import { initializeDatabase } from './database.js';
+
 const app = express();
 const PORT = 3000;
 
@@ -14,7 +16,11 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Sunucuyu 3000 portunda başlatıyoruz
-app.listen(PORT, () => {
-    console.log(`Sunucu ayağa kalktı! http://localhost:${PORT} adresinden istekleri bekliyor.`);
+// 8. Günün Hedefi: Önce veritabanını kuruyoruz, sonra sunucuyu açıyoruz
+initializeDatabase().then(() => {
+    app.listen(PORT, () => {
+        console.log(`Sunucu ayağa kalktı! http://localhost:${PORT} adresinden istekleri bekliyor.`);
+    });
+}).catch(err => {
+    console.error("Veritabanı başlatılırken bir hata oluştu:", err);
 });
