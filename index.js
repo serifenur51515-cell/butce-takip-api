@@ -54,7 +54,49 @@ app.get('/transactions', async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
+// 10. Gün: İŞLEM SİL (DELETE)
+app.delete('/transactions/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
 
+        const result = await db.run(`DELETE FROM transactions WHERE id = ?`, [id]);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: "Silinmek istenen kayıt bulunamadı." });
+        }
+
+        res.json({ message: "İşlem başarıyla silindi.", id: id });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+// 10. Gün: ÖZET BİLGİ GETİR (GET /summary)
+app.get('/summary', async (req, res) => {
+    try {
+        const totalIncomeResult = await db.get(
+            `SELECT SUM(amount) as total FROM transactions WHERE type = 'gelir'`
+        );
+
+        const totalExpenseResult = await db.get(
+            `SELECT SUM(amount) as total FROM transactions WHERE type = 'gider'`
+        );
+
+        const totalIncome = totalIncomeResult.total || 0;
+        const totalExpense = totalExpenseResult.total || 0;
+        const balance = totalIncome - totalExpense;
+
+        res.json({
+            message: "Özet bilgi başarıyla hesaplandı",
+            data: {
+                totalIncome,
+                totalExpense,
+                balance
+            }
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
 // 8. Gün: Veritabanını başlat ve sunucuyu aç
 initializeDatabase().then(() => {
     app.listen(PORT, () => {
