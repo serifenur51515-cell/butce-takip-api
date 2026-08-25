@@ -155,9 +155,9 @@ app.get('/transactions', authenticateToken, async (req, res) => {
   }
 });
 
-// 29. Gün: Profil bilgisi getiren endpoint (Çakışma Testi)
+// 29. Gün: Profil bilgisi getiren endpoint (Çakışma Çözüldü)
 app.get('/profile', (req, res) => {
-  res.json({ message: "Çakışma testi" });
+  res.json({ message: "Profil bilgileri ve çakışma çözümü başarılı!" });
 });
 
 export default app;
