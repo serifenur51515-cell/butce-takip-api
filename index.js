@@ -166,16 +166,18 @@ app.post('/transactions', authenticateToken, async (req, res) => {
 
 // Korumalı Harcamaları Listeleme (Sadece giriş yapan kullanıcının verilerini getirir)
 app.get('/transactions', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const transactions = await db.all('SELECT * FROM transactions WHERE user_id = ?', [userId]);
-        res.status(200).json(transactions);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const userId = req.user.userId;
+    const transactions = await db.all('SELECT * FROM transactions WHERE user_id = ?', [userId]);
+    res.status(200).json(transactions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
 // 29. Gün: Profil bilgisi getiren endpoint
 app.get('/profile', (req, res) => {
-  res.json({ message: "Profil bilgileri getirildi" });
+  res.json({ message: "Master dalı değişikliği" });
 });
+
 export default app;
