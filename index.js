@@ -2,182 +2,162 @@ import express from 'express';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import helmet from 'helmet';
+import jwt from 'jwt-simple';
 import cors from 'cors';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = 'super-gizli-anahtar-123';
 
+// Güvenlik ve Middleware ayarları
 app.use(helmet());
 app.use(cors());
+app.use(express.json());
 
+// Rate Limiting (Brute-Force koruması)
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { error: 'Çok fazla istek gönderildi, lütfen biraz bekleyin.' }
+  windowMs: 15 * 60 * 1000, // 15 dakika
+  max: 100 // IP başına limit
 });
-app.use('/auth/', limiter);
+app.use(limiter);
 
-const PORT = process.env.PORT || 3000;
+// Veritabanı bağlantısı
 let db;
-const SECRET_KEY = 'GIZLI_KEY_123';
-
-// Veritabanı bağlantısı ve tabloların oluşturulması
 (async () => {
-    db = await open({
-        filename: './database.sqlite',
-        driver: sqlite3.Database
-    });
+  db = await open({
+    filename: './database.sqlite',
+    driver: sqlite3.Database
+  });
 
-    // Transactions tablosu
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount REAL,
-            type TEXT,
-            category TEXT,
-            note TEXT,
-            date TEXT
-        )
-    `);
+  // Tabloları oluştur
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE,
+      password_hash TEXT
+    );
 
-    // 21. Gün: Users tablosu (Kullanıcı kaydı için)
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    console.log('Veritabanı, transactions ve users tabloları başarıyla hazırlandı!');
-
-    // Sunucuyu başlatıyoruz
-    app.listen(PORT, () => {
-        console.log(`Sunucu http://localhost:${PORT} üzerinde çalışıyor.`);
-    });
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      title TEXT,
+      amount REAL,
+      type TEXT,
+      category TEXT,
+      date TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+  `);
 })();
 
-// 21. Gün: Kullanıcı Kayıt (Register) Endpoint'i
+// JWT Doğrulama Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Erişim engellendi: Token bulunamadı' });
+  }
+
+  try {
+    const decoded = jwt.decode(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Geçersiz veya süresi dolmuş token' });
+  }
+};
+
+// --- AUTH ENDPOINTS ---
+
+// Kayıt Ol
 app.post('/auth/register', async (req, res) => {
-    try {
-        const { email, password } = req.body;
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email ve şifre zorunludur' });
+  }
 
-        if (!email || !password) {
-            return res.status(400).json({ error: 'Email ve şifre zorunludur.' });
-        }
-
-        // Şifreyi 10 tur salt ile hash'liyoruz
-        const saltRounds = 10;
-        const passwordHash = await bcrypt.hash(password, saltRounds);
-
-        // Kullanıcıyı veritabanına ekliyoruz
-        const result = await db.run(
-            'INSERT INTO users (email, password_hash) VALUES (?, ?)',
-            [email, passwordHash]
-        );
-
-        res.status(201).json({
-            message: 'Kullanıcı başarıyla oluşturuldu.',
-            userId: result.lastID
-        });
-    } catch (err) {
-        if (err.message && err.message.includes('UNIQUE constraint failed')) {
-            return res.status(400).json({ error: 'Bu e-posta adresi zaten kullanımda.' });
-        }
-        res.status(500).json({ error: 'Sunucu hatası oluştu.' });
-    }
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await db.run(
+      'INSERT INTO users (email, password_hash) VALUES (?, ?)',
+      [email, hashedPassword]
+    );
+    res.status(201).json({ message: 'Kullanıcı başarıyla oluşturuldu', userId: result.lastID });
+  } catch (err) {
+    res.status(400).json({ error: 'Bu email zaten kayıtlı' });
+  }
 });
-// 22. Gün: Kullanıcı Girişi (Login)
+
+// Giriş Yap
 app.post('/auth/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
+  const { email, password } = req.body;
+  const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
 
-        if (!email || !password) {
-            return res.status(400).json({ error: 'E-posta ve şifre zorunludur.' });
-        }
+  if (!user) {
+    return res.status(401).json({ error: 'Kullanıcı bulunamadı' });
+  }
 
-        const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
-        if (!user) {
-            return res.status(400).json({ error: 'Geçersiz e-posta veya şifre.' });
-        }
+  const validPassword = await bcrypt.compare(password, user.password_hash);
+  if (!validPassword) {
+    return res.status(401).json({ error: 'Hatalı şifre' });
+  }
 
-        const isMatch = await bcrypt.compare(password, user.password_hash);
-        if (!isMatch) {
-            return res.status(400).json({ error: 'Geçersiz e-posta veya şifre.' });
-        }
-
-        const token = jwt.sign(
-            { userId: user.id, email: user.email },
-            SECRET_KEY,
-            { expiresIn: '1h' }
-        );
-
-        res.status(200).json({
-            message: 'Giriş başarılı!',
-            token: token
-        });
-    } catch (err) {
-        res.status(500).json({ error: 'Sunucu hatası oluştu.' });
-    }
+  const token = jwt.encode({ userId: user.id, email: user.email }, JWT_SECRET);
+  res.json({ token });
 });
 
-// JWT Güvenlik Kapısı (Middleware)
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+// --- TRANSACTIONS ENDPOINTS ---
 
-    if (!token) {
-        return res.status(401).json({ error: 'Erişim engellendi. Token bulunamadı.' });
-    }
-
-    jwt.verify(token, SECRET_KEY, (err, user) => {
-        if (err) {
-            return res.status(401).json({ error: 'Geçersiz veya süresi dolmuş token.' });
-        }
-        req.user = user;
-        next();
-    });
-}
-
-// Korumalı Harcama Ekleme (Sadece giriş yapan kullanıcının ID'si ile kaydeder)
+// Harcama Ekle
 app.post('/transactions', authenticateToken, async (req, res) => {
-    try {
-        const { amount, type, category, note, date } = req.body;
-        const userId = req.user.userId;
+  const { title, amount, type, category, date } = req.body;
+  const userId = req.user.userId;
 
-        const result = await db.run(
-            'INSERT INTO transactions (user_id, amount, type, category, note, date) VALUES (?, ?, ?, ?, ?, ?)',
-            [userId, amount, type, category, note, date]
-        );
-
-        res.status(201).json({
-            message: 'İşlem başarıyla eklendi.',
-            id: result.lastID
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const result = await db.run(
+      'INSERT INTO transactions (user_id, title, amount, type, category, date) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, title, amount, type, category, date]
+    );
+    res.status(201).json({ id: result.lastID, title, amount, type, category, date });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Korumalı Harcamaları Listeleme (Sadece giriş yapan kullanıcının verilerini getirir)
+// Korumalı Harcamaları Listeleme (Filtreleme & Sayfalama Destekli)
 app.get('/transactions', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const transactions = await db.all('SELECT * FROM transactions WHERE user_id = ?', [userId]);
+    const { type, category, limit = 10, offset = 0 } = req.query;
+
+    let query = 'SELECT * FROM transactions WHERE user_id = ?';
+    let params = [userId];
+
+    if (type) {
+      query += ' AND type = ?';
+      params.push(type);
+    }
+    if (category) {
+      query += ' AND category = ?';
+      params.push(category);
+    }
+
+    query += ' LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+
+    const transactions = await db.all(query, params);
     res.status(200).json(transactions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 29. Gün: Profil bilgisi getiren endpoint
+// 29. Gün: Profil bilgisi getiren endpoint (Çakışma Çözüldü)
 app.get('/profile', (req, res) => {
-  res.json({ message: "Master dalı değişikliği" });
+  res.json({ message: "Profil bilgileri ve çakışma çözümü başarılı!" });
 });
 
 export default app;
