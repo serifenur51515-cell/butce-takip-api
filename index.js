@@ -174,4 +174,8 @@ app.get('/transactions', authenticateToken, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// 29. Gün: Profil bilgisi getiren endpoint
+app.get('/profile', (req, res) => {
+  res.json({ message: "Profil bilgileri getirildi" });
+});
 export default app;
